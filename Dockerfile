@@ -1,7 +1,7 @@
 # ============================================
 # Stage 1: Builder
 # ============================================
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN python -m venv /opt/venv && \
 # ============================================
 # Stage 2: Runtime (Final Image)
 # ============================================
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim-bookworm AS runtime
 
 WORKDIR /app
 
