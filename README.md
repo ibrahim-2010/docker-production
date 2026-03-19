@@ -122,3 +122,61 @@ The prometheus.yml scrape target must use the Docker service name (web:5000), no
 The hardest part of this assignment was discovering that intuitive assumptions about security and optimization were wrong. The multi-stage build did not shrink the image. The Bookworm base image did not reduce vulnerabilities. These counterintuitive results forced a deeper understanding of how Docker images, Debian releases, and Python virtual environments actually work — not just how they are supposed to work in theory.
 
 The most valuable lesson was that production readiness requires empirical verification at every step: scan before and after base image changes, compare image sizes with actual measurements, and test network connectivity between containers rather than assuming service names resolve. The combination of multi-stage builds, CI/CD automation, security scanning, secrets management, and observability creates a production-grade system — but only when each practice is validated with real data, not assumptions.
+
+
+### Bonus A: Docker Swarm
+
+Deployed the stack to a single-node Swarm cluster and scaled the Flask app to 3 replicas to demonstrate load balancing and self-healing.
+
+#### Challenge: Swarm Incompatible with Compose File
+Running `docker stack deploy -c docker-compose.yml myapp` failed with `services.web.depends_on must be a list`. Docker Swarm does not support the extended depends_on syntax with conditions (service_started, service_healthy), does not support the `build:` directive (requires pre-built images), and does not support `restart:` policies (uses `deploy.restart_policy` instead). The `healthcheck` directive at the ervice level is also handled differently in Swarm.
+
+#### Solution: Separate Swarm-Specific Compose File
+Created `docker-compose.swarm.yml` that strips out all Swarm-incompatible features: replaced `build: .` with `image: flask-app:v2.0`, removed `depends_on` conditions, removed `healthcheck` and `restart` directives, changed network driver from `bridge` to `overlay` (required for Swarm multi-node communication), and added `deploy.replicas` for scaling.
+
+#### Results
+- Scaled web service to 3 replicas with `docker service scale myapp_web=3`
+- Each curl request returned a different hostname, confirming Swarm's built-in load balancer distributes requests across replicas
+- Killed one replica with `docker rm -f` — Swarm detected the missing  replica and spawned a replacement within seconds to maintain the desired count of 3
+
+#### Key Swarm vs Compose Differences Discovered
+
+| Feature | Docker Compose | Docker Swarm |
+|---------|---------------|--------------|
+| Build from Dockerfile | `build: .` supported | Not supported — requires pre-built images |
+| Startup ordering | `depends_on` with conditions | Simple list only, no conditions |
+| Network driver | `bridge` | `overlay` (enables cross-node communication) |
+| Scaling | Manual with `docker compose up --scale` | Built-in with `docker service scale` |
+| Self-healing | `restart: unless-stopped` | Automatic — maintains desired replica count |
+| Health checks | Defined per service | Managed by Swarm orchestrator |
+| Load balancing | Not built-in | Automatic across replicas |
+
+
+### Bonus B: Makefile
+
+Created a Makefile at the project root that automates common Docker commands into simple shortcuts. Instead of typing complex multi-flag commands, any team member can run `make run` to start the full stack.
+
+#### Challenge: make Not Installed on Windows
+Running `make run` returned `bash: make: command not found`. The `make` utility is a Unix tool that does not come pre-installed with Git Bash on Windows. Unlike macOS or Linux where make is typically available out of the box, Windows requires a separate installation.
+
+#### Solution
+Installed make via Chocolatey: `choco install make -y`. Alternatively, make can be installed via `winget install GnuWin32.Make`. After installation, closing and reopening the terminal was required for the PATH to update.
+
+#### Important: Makefiles Require Tabs
+Makefiles are one of the few file types where indentation matters and must use actual tab characters, not spaces. If VS Code converts tabs to spaces (the default for many configurations), make will fail with `*** missing separator. Stop.` The fix is to check the bottom status bar in VS Code and switch from "Spaces" to "Tabs" for the Makefile.
+
+#### Available Commands
+
+| Command | What It Does |
+|---------|-------------|
+| `make build` | Builds the Docker image as flask-app:v2.0 |
+| `make run` | Starts the full 5-service stack with docker compose up --build -d |
+| `make stop` | Stops all services with docker compose down |
+| `make clean` | Nuclear option — removes all containers, volumes, and images |
+| `make scan` | Runs Trivy security scan for HIGH and CRITICAL vulnerabilities |
+| `make push` | Tags and pushes the image to GHCR |
+| `make logs` | Follows all container logs in real time |
+
+
+### Bonus C: Prometheus Alerting
+Added an alert rule that fires when the Flask app has been unreachable for 30+ seconds. The up metric is automatically tracked by Prometheus for every scrape target. Verified by stopping the web container and confirming the alert fired in the Prometheus Alerts UI.
